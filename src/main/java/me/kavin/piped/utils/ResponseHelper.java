@@ -1,5 +1,7 @@
 package me.kavin.piped.utils;
 
+import static me.kavin.piped.consts.Constants.YOUTUBE_SERVICE;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
@@ -51,7 +53,9 @@ import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem;
 import org.schabi.newpipe.extractor.search.SearchInfo;
 import org.schabi.newpipe.extractor.stream.StreamInfo;
 import org.schabi.newpipe.extractor.stream.StreamInfoItem;
+import org.schabi.newpipe.extractor.stream.StreamType;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -149,11 +153,7 @@ public class ResponseHelper {
         if (lbryURL != null)
             videoStreams.add(new PipedStream(lbryURL, "MP4", "LBRY", "video/mp4", false));
 
-        final String hls;
-        boolean livestream = false;
-
-        if ((hls = info.getHlsUrl()) != null && !hls.isEmpty())
-            livestream = true;
+        boolean livestream = info.getStreamType() == StreamType.LIVE_STREAM;
 
         if (!livestream) {
             info.getVideoOnlyStreams().forEach(stream -> videoStreams.add(new PipedStream(rewriteURL(stream.getUrl()),
@@ -191,8 +191,8 @@ public class ResponseHelper {
                 info.getTextualUploadDate(), info.getUploaderName(), substringYouTube(info.getUploaderUrl()),
                 rewriteURL(info.getUploaderAvatarUrl()), rewriteURL(info.getThumbnailUrl()), info.getDuration(),
                 info.getViewCount(), info.getLikeCount(), info.getDislikeCount(), info.isUploaderVerified(),
-                audioStreams, videoStreams, relatedStreams, subtitles, livestream, hls, info.getDashMpdUrl(),
-                futureLbryId.get());
+                audioStreams, videoStreams, relatedStreams, subtitles, livestream, rewriteURL(info.getHlsUrl()),
+                rewriteURL(info.getDashMpdUrl()), futureLbryId.get());
 
         return Constants.mapper.writeValueAsBytes(streams);
 
@@ -253,7 +253,7 @@ public class ResponseHelper {
 
         Page prevpage = Constants.mapper.readValue(prevpageStr, Page.class);
 
-        InfoItemsPage<StreamInfoItem> info = ChannelInfo.getMoreItems(Constants.YOUTUBE_SERVICE,
+        InfoItemsPage<StreamInfoItem> info = ChannelInfo.getMoreItems(YOUTUBE_SERVICE,
                 "https://youtube.com/channel/" + channelId, prevpage);
 
         final List<StreamItem> relatedStreams = new ObjectArrayList<>();
@@ -280,7 +280,7 @@ public class ResponseHelper {
 
         final List<StreamItem> relatedStreams = new ObjectArrayList<>();
 
-        KioskList kioskList = Constants.YOUTUBE_SERVICE.getKioskList();
+        KioskList kioskList = YOUTUBE_SERVICE.getKioskList();
         kioskList.forceContentCountry(new ContentCountry(region));
         KioskExtractor<?> extractor = kioskList.getDefaultKioskExtractor();
         extractor.fetchPage();
@@ -321,7 +321,7 @@ public class ResponseHelper {
 
         Page prevpage = Constants.mapper.readValue(prevpageStr, Page.class);
 
-        InfoItemsPage<StreamInfoItem> info = PlaylistInfo.getMoreItems(Constants.YOUTUBE_SERVICE,
+        InfoItemsPage<StreamInfoItem> info = PlaylistInfo.getMoreItems(YOUTUBE_SERVICE,
                 "https://www.youtube.com/playlist?list=" + playlistId, prevpage);
 
         final List<StreamItem> relatedStreams = new ObjectArrayList<>();
@@ -372,16 +372,15 @@ public class ResponseHelper {
     public static final byte[] suggestionsResponse(String query)
             throws JsonProcessingException, IOException, ExtractionException {
 
-        return Constants.mapper
-                .writeValueAsBytes(Constants.YOUTUBE_SERVICE.getSuggestionExtractor().suggestionList(query));
+        return Constants.mapper.writeValueAsBytes(YOUTUBE_SERVICE.getSuggestionExtractor().suggestionList(query));
 
     }
 
     public static final byte[] searchResponse(String q, String filter)
             throws IOException, ExtractionException, InterruptedException {
 
-        final SearchInfo info = SearchInfo.getInfo(Constants.YOUTUBE_SERVICE,
-                Constants.YOUTUBE_SERVICE.getSearchQHFactory().fromQuery(q, Collections.singletonList(filter), null));
+        final SearchInfo info = SearchInfo.getInfo(YOUTUBE_SERVICE,
+                YOUTUBE_SERVICE.getSearchQHFactory().fromQuery(q, Collections.singletonList(filter), null));
 
         ObjectArrayList<Object> items = new ObjectArrayList<>();
 
@@ -418,9 +417,8 @@ public class ResponseHelper {
 
         Page prevpage = Constants.mapper.readValue(prevpageStr, Page.class);
 
-        InfoItemsPage<InfoItem> pages = SearchInfo.getMoreItems(Constants.YOUTUBE_SERVICE,
-                Constants.YOUTUBE_SERVICE.getSearchQHFactory().fromQuery(q, Collections.singletonList(filter), null),
-                prevpage);
+        InfoItemsPage<InfoItem> pages = SearchInfo.getMoreItems(YOUTUBE_SERVICE,
+                YOUTUBE_SERVICE.getSearchQHFactory().fromQuery(q, Collections.singletonList(filter), null), prevpage);
 
         ObjectArrayList<Object> items = new ObjectArrayList<>();
 
@@ -459,10 +457,15 @@ public class ResponseHelper {
         List<Comment> comments = new ObjectArrayList<>();
 
         info.getRelatedItems().forEach(comment -> {
-            comments.add(new Comment(comment.getUploaderName(), rewriteURL(comment.getUploaderAvatarUrl()),
-                    comment.getCommentId(), comment.getCommentText(), comment.getTextualUploadDate(),
-                    substringYouTube(comment.getUploaderUrl()), comment.getLikeCount(), comment.isHeartedByUploader(),
-                    comment.isPinned(), comment.isUploaderVerified()));
+            try {
+                comments.add(new Comment(comment.getUploaderName(), rewriteURL(comment.getUploaderAvatarUrl()),
+                        comment.getCommentId(), comment.getCommentText(), comment.getTextualUploadDate(),
+                        substringYouTube(comment.getUploaderUrl()),
+                        Constants.mapper.writeValueAsString(comment.getReplies()), comment.getLikeCount(),
+                        comment.isHeartedByUploader(), comment.isPinned(), comment.isUploaderVerified()));
+            } catch (JsonProcessingException e) {
+                ExceptionHandler.handle(e);
+            }
         });
 
         String nextpage = null;
@@ -488,10 +491,15 @@ public class ResponseHelper {
         List<Comment> comments = new ObjectArrayList<>();
 
         info.getItems().forEach(comment -> {
-            comments.add(new Comment(comment.getUploaderName(), rewriteURL(comment.getUploaderAvatarUrl()),
-                    comment.getCommentId(), comment.getCommentText(), comment.getTextualUploadDate(),
-                    substringYouTube(comment.getUploaderUrl()), comment.getLikeCount(), comment.isHeartedByUploader(),
-                    comment.isPinned(), comment.isUploaderVerified()));
+            try {
+                comments.add(new Comment(comment.getUploaderName(), rewriteURL(comment.getUploaderAvatarUrl()),
+                        comment.getCommentId(), comment.getCommentText(), comment.getTextualUploadDate(),
+                        substringYouTube(comment.getUploaderUrl()),
+                        Constants.mapper.writeValueAsString(comment.getReplies()), comment.getLikeCount(),
+                        comment.isHeartedByUploader(), comment.isPinned(), comment.isUploaderVerified()));
+            } catch (JsonProcessingException e) {
+                ExceptionHandler.handle(e);
+            }
         });
 
         String nextpage = null;
@@ -528,7 +536,7 @@ public class ResponseHelper {
             return Constants.mapper.writeValueAsBytes(new AlreadyRegisteredResponse());
         }
 
-        {
+        if (Constants.COMPROMISED_PASSWORD_CHECK) {
             String sha1Hash = DigestUtils.sha1Hex(pass).toUpperCase();
             String prefix = sha1Hash.substring(0, 5);
             String suffix = sha1Hash.substring(5);
@@ -552,6 +560,8 @@ public class ResponseHelper {
 
     }
 
+    private static final BCryptPasswordEncoder bcryptPasswordEncoder = new BCryptPasswordEncoder();
+
     public static final byte[] loginResponse(String user, String pass)
             throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
 
@@ -568,9 +578,17 @@ public class ResponseHelper {
 
         User dbuser = s.createQuery(cr).uniqueResult();
 
-        if (dbuser != null && argon2PasswordEncoder.matches(pass, dbuser.getPassword())) {
-            s.close();
-            return Constants.mapper.writeValueAsBytes(new LoginResponse(dbuser.getSessionId()));
+        if (dbuser != null) {
+            String hash = dbuser.getPassword();
+            if (hash.startsWith("$argon2")) {
+                if (argon2PasswordEncoder.matches(pass, hash)) {
+                    s.close();
+                    return Constants.mapper.writeValueAsBytes(new LoginResponse(dbuser.getSessionId()));
+                }
+            } else if (bcryptPasswordEncoder.matches(pass, hash)) {
+                s.close();
+                return Constants.mapper.writeValueAsBytes(new LoginResponse(dbuser.getSessionId()));
+            }
         }
 
         s.close();
@@ -694,26 +712,30 @@ public class ResponseHelper {
 
         Session s = DatabaseSessionFactory.createSession();
 
-        User user = DatabaseHelper.getUserFromSessionWithSubscribed(s, session);
+        User user = DatabaseHelper.getUserFromSession(s, session);
 
         if (user != null) {
 
+            @SuppressWarnings("unchecked")
+            List<Object[]> queryResults = s.createNativeQuery(
+                    "select Video.*, Channel.* from videos as Video left join channels as Channel on Video.uploader_id = Channel.uploader_id inner join users_subscribed on users_subscribed.channel = Channel.uploader_id where users_subscribed.subscriber = :user")
+                    .setParameter("user", user.getId()).addEntity("Video", Video.class)
+                    .addEntity("Channel", me.kavin.piped.utils.obj.db.Channel.class).getResultList();
+
             List<FeedItem> feedItems = new ObjectArrayList<>();
 
-            if (user.getSubscribed() != null && !user.getSubscribed().isEmpty()) {
+            queryResults.forEach(obj -> {
+                Video video = (Video) obj[0];
+                me.kavin.piped.utils.obj.db.Channel channel = (me.kavin.piped.utils.obj.db.Channel) obj[1];
 
-                List<Video> videos = DatabaseHelper.getVideosFromChannelIds(s, user.getSubscribed());
+                feedItems.add(new FeedItem("/watch?v=" + video.getId(), video.getTitle(),
+                        rewriteURL(video.getThumbnail()), "/channel/" + channel.getUploaderId(), channel.getUploader(),
+                        rewriteURL(channel.getUploaderAvatar()), video.getViews(), video.getDuration(),
+                        video.getUploaded(), channel.isVerified()));
 
-                videos.forEach(video -> {
-                    feedItems.add(new FeedItem("/watch?v=" + video.getId(), video.getTitle(),
-                            rewriteURL(video.getThumbnail()), "/channel/" + video.getChannel().getUploaderId(),
-                            video.getChannel().getUploader(), rewriteURL(video.getChannel().getUploaderAvatar()),
-                            video.getViews(), video.getDuration(), video.getUploaded(),
-                            video.getChannel().isVerified()));
-                });
+            });
 
-                Collections.sort(feedItems, (a, b) -> (int) (b.uploaded - a.uploaded));
-            }
+            Collections.sort(feedItems, (a, b) -> (int) (b.uploaded - a.uploaded));
 
             s.close();
 
@@ -731,7 +753,7 @@ public class ResponseHelper {
 
         Session s = DatabaseSessionFactory.createSession();
 
-        User user = DatabaseHelper.getUserFromSessionWithSubscribed(s, session);
+        User user = DatabaseHelper.getUserFromSession(s, session);
 
         if (user != null) {
 
@@ -743,18 +765,25 @@ public class ResponseHelper {
 
             if (user.getSubscribed() != null && !user.getSubscribed().isEmpty()) {
 
-                List<Video> videos = DatabaseHelper.getVideosFromChannelIds(s, user.getSubscribed());
+                @SuppressWarnings("unchecked")
+                List<Object[]> queryResults = s.createNativeQuery(
+                        "select Video.*, Channel.* from videos as Video left join channels as Channel on Video.uploader_id = Channel.uploader_id inner join users_subscribed on users_subscribed.channel = Channel.uploader_id where users_subscribed.subscriber = :user")
+                        .setParameter("user", user.getId()).addEntity("Video", Video.class)
+                        .addEntity("Channel", me.kavin.piped.utils.obj.db.Channel.class).getResultList();
 
-                Collections.sort(videos, (a, b) -> (int) (b.getUploaded() - a.getUploaded()));
+                Collections.sort(queryResults,
+                        (a, b) -> (int) (((Video) b[0]).getUploaded() - ((Video) a[0]).getUploaded()));
 
                 final List<SyndEntry> entries = new ObjectArrayList<>();
 
-                for (Video video : videos) {
+                for (Object[] result : queryResults) {
+                    Video video = (Video) result[0];
+                    me.kavin.piped.utils.obj.db.Channel channel = (me.kavin.piped.utils.obj.db.Channel) result[1];
                     SyndEntry entry = new SyndEntryImpl();
 
                     SyndPerson person = new SyndPersonImpl();
-                    person.setName(video.getChannel().getUploader());
-                    person.setUri(Constants.FRONTEND_URL + "/channel/" + video.getChannel().getUploaderId());
+                    person.setName(channel.getUploader());
+                    person.setUri(Constants.FRONTEND_URL + "/channel/" + channel.getUploaderId());
 
                     entry.setAuthors(Collections.singletonList(person));
 
@@ -1056,9 +1085,6 @@ public class ResponseHelper {
     }
 
     private static String rewriteURL(final String old) {
-
-        if (Constants.debug)
-            return old;
 
         if (old == null || old.isEmpty())
             return null;

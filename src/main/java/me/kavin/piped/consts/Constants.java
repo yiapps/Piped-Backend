@@ -21,8 +21,6 @@ import me.kavin.piped.utils.PageMixin;
 
 public class Constants {
 
-    public static final boolean debug = false;
-
     public static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; rv:78.0) Gecko/20100101 Firefox/78.0";
 
     public static final int PORT;
@@ -43,6 +41,8 @@ public class Constants {
     public static final HttpClient h2client;
     public static final HttpClient h2_no_redir_client;
 
+    public static final boolean COMPROMISED_PASSWORD_CHECK;
+
     public static final ObjectMapper mapper = new ObjectMapper().addMixIn(Page.class, PageMixin.class);
 
     public static final Object2ObjectOpenHashMap<String, String> hibernateProperties = new Object2ObjectOpenHashMap<>();
@@ -61,6 +61,7 @@ public class Constants {
             PUBLIC_URL = prop.getProperty("API_URL");
             HTTP_PROXY = prop.getProperty("HTTP_PROXY");
             FRONTEND_URL = prop.getProperty("FRONTEND_URL", "https://pipedapi.kavin.rocks");
+            COMPROMISED_PASSWORD_CHECK = Boolean.parseBoolean(prop.getProperty("COMPROMISED_PASSWORD_CHECK", "true"));
             prop.forEach((_key, _value) -> {
                 String key = String.valueOf(_key), value = String.valueOf(_value);
                 if (key.startsWith("hibernate"))
